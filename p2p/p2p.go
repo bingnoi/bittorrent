@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/veggiedefender/torrent-client/client"
-	"github.com/veggiedefender/torrent-client/message"
-	"github.com/veggiedefender/torrent-client/peers"
+	"github.com/bingnoi/bittorrent/client"
+	"github.com/bingnoi/bittorrent/message"
+	"github.com/bingnoi/bittorrent/peers"
 )
 
 const MaxBlockSize = 16384
@@ -127,11 +127,11 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 func (torr *Torrent) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
 	c, err := client.New(peer, torr.PeerID, torr.InfoHash)
 	if err != nil {
-		log.Printf("Fail to connect with %s.\n", peer.IP)
+		log.Printf("Connecting with %s .... HandShake Fail\n", peer.IP)
 		return
 	}
 	defer c.Conn.Close()
-	log.Printf("Connect with %s Successfully\n", peer.IP)
+	log.Printf("Connecting with %s .... HandShake OK\n", peer.IP)
 
 	c.SendUnchoke()
 	c.SendInterested()
@@ -176,7 +176,7 @@ func (torr *Torrent) calculatePieceSize(index int) int {
 }
 
 func (torr *Torrent) Download() ([]byte, error) {
-	log.Println("Start to download ", torr.Name)
+	log.Println("Now, We are downloading file : ", torr.Name)
 	workQueue := make(chan *pieceWork, len(torr.PieceHashes))
 	results := make(chan *pieceResult)
 	for index, hash := range torr.PieceHashes {
@@ -198,7 +198,7 @@ func (torr *Torrent) Download() ([]byte, error) {
 
 		percent := float64(donePieces) / float64(len(torr.PieceHashes)) * 100
 		numWorkers := runtime.NumGoroutine() - 1 
-		log.Printf("(%0.2f%%) get piece #%d from %d\n", percent, res.index, numWorkers)
+		log.Printf("(We have gone through (%0.2f%%)), #%d --(piece)--> #%d",percent,numWorkers,res.index)
 	}
 	close(workQueue)
 

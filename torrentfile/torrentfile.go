@@ -1,6 +1,5 @@
 /*This file is the first function file, dealing with the open of a torrent file
-and dispatch the function to various module
-*/
+and dispatch the function to various module*/
 
 package torrentfile
 
@@ -9,21 +8,22 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
-	"os"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/bingnoi/bittorrent/p2p"
+	"github.com/bingnoi/bittorrent/peers"
 	"github.com/jackpal/bencode-go"
-	"github.com/veggiedefender/torrent-client/p2p"
-	"github.com/veggiedefender/torrent-client/peers"
 )
 
 const Port uint16 = 6881
 
 
-// define a torrent file
+// define a decoded torrent file
 
 type TorrentFile struct {
 	Announce    string
@@ -52,14 +52,16 @@ type bencodeTrackerResp struct {
 	Peers    string `bencode:"peers"`
 }
 
-func (t *TorrentFile) DownloadToFile(path string) error {
+func (torr*TorrentFile) DownloadToFile(path string) error {
 	var peerID [20]byte
+	
 	_, err := rand.Read(peerID[:])
 	if err != nil {
 		return err
 	}
 
-	peers, err := t.requestPeers(peerID, Port)
+	//读取PeerId,并进行处理
+	peers, err := torr.requestPeers(peerID, Port)
 	if err != nil {
 		return err
 	}
@@ -67,17 +69,20 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 	torrent := p2p.Torrent{
 		Peers:       peers,
 		PeerID:      peerID,
-		InfoHash:    t.InfoHash,
-		PieceHashes: t.PieceHashes,
-		PieceLength: t.PieceLength,
-		Length:      t.Length,
-		Name:        t.Name,
+		InfoHash:    torr.InfoHash,
+		PieceHashes: torr.PieceHashes,
+		PieceLength: torr.PieceLength,
+		Length:      torr.Length,
+		Name:        torr.Name,
 	}
+
+	//开始下载
 	buf, err := torrent.Download()
 	if err != nil {
 		return err
 	}
 
+	//创建文件入口
 	outFile, err := os.Create(path)
 	if err != nil {
 		return err
@@ -88,11 +93,15 @@ func (t *TorrentFile) DownloadToFile(path string) error {
 	if err != nil {
 		return err
 	}
+
+	log.Println("Download Successfully! Wish you have a good day!")
 	return nil
 }
 
 func Open(path string) (TorrentFile, error) {
 	file, err := os.Open(path)
+
+	//如果解码失败
 	if err != nil {
 		return TorrentFile{}, err
 	}
@@ -100,8 +109,10 @@ func Open(path string) (TorrentFile, error) {
 
 	fmt.Println(path)
 
+	//如果解码成功
 	bto := bencodeTorrent{}
 	err = bencode.Unmarshal(file, &bto)
+
 	if err != nil {
 		return TorrentFile{}, err
 	}
@@ -109,21 +120,21 @@ func Open(path string) (TorrentFile, error) {
 	return bto.toTorrentFile()
 }
 
-func (i *bencodeInfo) hash() ([20]byte, error) {
+func (info *bencodeInfo) hash() ([20]byte, error) {
 	var buf bytes.Buffer
-	err := bencode.Marshal(&buf, *i)
+	err := bencode.Marshal(&buf, *info)
 	if err != nil {
 		return [20]byte{}, err
 	}
-	h := sha1.Sum(buf.Bytes())
-	return h, nil
+	hashsum := sha1.Sum(buf.Bytes())
+	return hashsum, nil
 }
 
 func (i *bencodeInfo) splitPieceHashes() ([][20]byte, error) {
-	hashLen := 20 // Length of SHA-1 hash
+	hashLen := 20 // 哈希的长度
 	buf := []byte(i.Pieces)
 	if len(buf)%hashLen != 0 {
-		err := fmt.Errorf("Received malformed pieces of length %d", len(buf))
+		err := fmt.Errorf("Error! length %d not right", len(buf))
 		return nil, err
 	}
 	numHashes := len(buf) / hashLen
@@ -144,7 +155,7 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 	if err != nil {
 		return TorrentFile{}, err
 	}
-	t := TorrentFile{
+	torr:= TorrentFile{
 		Announce:    bto.Announce,
 		InfoHash:    infoHash,
 		PieceHashes: pieceHashes,
@@ -152,33 +163,43 @@ func (bto *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 		Length:      bto.Info.Length,
 		Name:        bto.Info.Name,
 	}
-	return t, nil
+	log.Println("Announce...OK")
+	log.Println("InfoHash...OK")
+	log.Println("PieceHashes...OK")  
+	log.Println("PieceLength...OK")  
+	log.Println("Length...OK")       
+	log.Println("Name...OK")     
+	log.Println("Parse Successfully:)")    
+	return torr , nil
 }
 
-func (t *TorrentFile) buildTrackerURL(peerID [20]byte, port uint16) (string, error) {
-	base, err := url.Parse(t.Announce)
+func (torr *TorrentFile) buildTrackerURL(peerID [20]byte, port uint16) (string, error) {
+	base, err := url.Parse(torr.Announce)
 	if err != nil {
 		return "", err
 	}
 	params := url.Values{
-		"info_hash":  []string{string(t.InfoHash[:])},
+		"info_hash":  []string{string(torr.InfoHash[:])},
 		"peer_id":    []string{string(peerID[:])},
 		"port":       []string{strconv.Itoa(int(Port))},
 		"uploaded":   []string{"0"},
 		"downloaded": []string{"0"},
 		"compact":    []string{"1"},
-		"left":       []string{strconv.Itoa(t.Length)},
+		"left":       []string{strconv.Itoa(torr.Length)},
 	}
 	base.RawQuery = params.Encode()
 	return base.String(), nil
 }
 
-func (t *TorrentFile) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
-	url, err := t.buildTrackerURL(peerID, port)
+func (torr*TorrentFile) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer, error) {
+	//构建TrackerUrl
+	url, err := torr.buildTrackerURL(peerID, port)
+
 	if err != nil {
 		return nil, err
 	}
 
+	//设置超时时间与事件
 	c := &http.Client{Timeout: 15 * time.Second}
 	resp, err := c.Get(url)
 	if err != nil {
