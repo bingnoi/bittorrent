@@ -1,5 +1,7 @@
 /*This file is the first function file, dealing with the open of a torrent file
-and dispatch the function to various module*/
+and dispatch the function to various module
+解析torrent结构，同时提供下载入口
+*/
 
 package torrentfile
 
@@ -66,6 +68,7 @@ func (torr*TorrentFile) DownloadToFile(path string) error {
 		return err
 	}
 
+	//生成p2p对象
 	torrent := p2p.Torrent{
 		Peers:       peers,
 		PeerID:      peerID,
@@ -89,6 +92,8 @@ func (torr*TorrentFile) DownloadToFile(path string) error {
 	}
 	
 	defer outFile.Close()
+
+	//写入对应的文件
 	_, err = outFile.Write(buf)
 	if err != nil {
 		return err
@@ -98,6 +103,7 @@ func (torr*TorrentFile) DownloadToFile(path string) error {
 	return nil
 }
 
+//解析torrent文件
 func Open(path string) (TorrentFile, error) {
 	file, err := os.Open(path)
 
@@ -178,6 +184,8 @@ func (torr *TorrentFile) buildTrackerURL(peerID [20]byte, port uint16) (string, 
 	if err != nil {
 		return "", err
 	}
+
+	//生成url参数
 	params := url.Values{
 		"info_hash":  []string{string(torr.InfoHash[:])},
 		"peer_id":    []string{string(peerID[:])},
@@ -213,5 +221,7 @@ func (torr*TorrentFile) requestPeers(peerID [20]byte, port uint16) ([]peers.Peer
 		return nil, err
 	}
 
+	//返回了解析值
 	return peers.Unmarshal([]byte(trackerResp.Peers))
+	
 }

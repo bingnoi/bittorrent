@@ -27,6 +27,7 @@ type handshake struct {
 	PeerID   [20]byte
 }
 
+//建立握手
 func NewHandShake(infoHash, peerID [20]byte) *handshake {
 	return &handshake{
 		Pstr:     "BitTorrent protocol",
@@ -35,16 +36,18 @@ func NewHandShake(infoHash, peerID [20]byte) *handshake {
 	}
 }
 
-func (h *handshake) Serialize() []byte {
-	buf := make([]byte, len(h.Pstr)+49)
-	buf[0] = byte(len(h.Pstr))
-	copy(buf[1:], h.Pstr)
+//这个地方是握手的序列化
+func (hs *handshake) Serialize() []byte {
+	buf := make([]byte, len(hs.Pstr)+49)
+	buf[0] = byte(len(hs.Pstr))
+	copy(buf[1:], hs.Pstr)
 	copy(buf[20:], make([]byte, 8))
-	copy(buf[28:], h.InfoHash[:])
-	copy(buf[48:], h.PeerID[:])
+	copy(buf[28:], hs.InfoHash[:])
+	copy(buf[48:], hs.PeerID[:])
 	return buf
 }
 
+//读取信息
 func ConnectionRead(r io.Reader) (*handshake, error) {
 	lengthBuf := make([]byte, 1)
 	_, err := io.ReadFull(r, lengthBuf)
@@ -85,6 +88,7 @@ func ConSerialize(pstrlen int, r io.Reader) (*handshake, error) {
 	return &h, nil
 }
 
+//建立握手然后处理
 func completeHandshake(conn net.Conn, infohash, peerID [20]byte) (*handshake, error) {
 	conn.SetDeadline(time.Now().Add(3 * time.Second))
 	defer conn.SetDeadline(time.Time{})
@@ -125,6 +129,8 @@ func recvBitfield(conn net.Conn) (bitfield.Bitfield, error) {
 	return msg.Payload, nil
 }
 
+
+//这里是新建一个客户端
 func New(peer peers.Peer, peerID, infoHash [20]byte) (*Client, error) {
 	conn, err := net.DialTimeout("tcp", peer.String(), 3*time.Second)
 	if err != nil {

@@ -27,7 +27,7 @@ type Torrent struct {
 	Name        string
 }
 
-type pieceWork struct {
+type filePiece struct {
 	index  int
 	hash   [20]byte
 	length int
@@ -48,52 +48,53 @@ type pieceProgress struct {
 }
 
 func (state *pieceProgress) readMessage() error {
-	msg, err := state.client.Read() 
+	msg, err := state.client.Read()
 	if err != nil {
 		return err
 	}
 
-	if msg == nil { 
+	if msg == nil {
 		return nil
 	}
 
 	switch msg.ID {
-		case message.MsgUnchoke:
-			state.client.Choked = false
-		case message.MsgChoke:
-			state.client.Choked = true
-		case message.MsgHave:
-			index, err := message.ParseHave(msg)
-			if err != nil {
-				return err
-			}
-			state.client.Bitfield.SetPiece(index)
-		case message.MsgPiece:
-			n, err := message.ParsePiece(state.index, state.buf, msg)
-			if err != nil {
-				return err
-			}
-			state.downloaded += n
-			state.backlog--
+	case message.MsgUnchoke:
+		state.client.Choked = false
+	case message.MsgChoke:
+		state.client.Choked = true
+	case message.MsgHave:
+		index, err := message.ParseHave(msg)
+		if err != nil {
+			return err
+		}
+		state.client.Bitfield.SetPiece(index)
+	case message.MsgPiece:
+		n, err := message.ParsePiece(state.index, state.buf, msg)
+		if err != nil {
+			return err
+		}
+		state.downloaded += n
+		state.backlog--
 	}
 	return nil
 }
 
-func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
+func attemptDownloadPiece(c *client.Client, pw *filePiece) ([]byte, error) {
 	state := pieceProgress{
 		index:  pw.index,
 		client: c,
 		buf:    make([]byte, pw.length),
 	}
 
+	//设置最大超时时长
 	c.Conn.SetDeadline(time.Now().Add(30 * time.Second))
-	defer c.Conn.SetDeadline(time.Time{}) 
+	defer c.Conn.SetDeadline(time.Time{})
 
 	for state.downloaded < pw.length {
 		if !state.client.Choked {
 			for state.backlog < MaxBacklog && state.requested < pw.length {
 				blockSize := MaxBlockSize
-				
+
 				if pw.length-state.requested < blockSize {
 					blockSize = pw.length - state.requested
 				}
@@ -116,7 +117,8 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 	return state.buf, nil
 }
 
-func checkIntegrity(pw *pieceWork, buf []byte) error {
+//通过哈希算法检查完整性
+func checkIntegrity(pw *filePiece, buf []byte) error {
 	hash := sha1.Sum(buf)
 	if !bytes.Equal(hash[:], pw.hash[:]) {
 		return fmt.Errorf("Index %d failed, Check please", pw.index)
@@ -124,7 +126,11 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 	return nil
 }
 
-func (torr *Torrent) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult) {
+
+//这个地方是为了实现下载pieces，分为1、建立handshake，发送unchoke 2、获取pieces
+func (torr *Torrent) startDownloadWorker(peer peers.Peer, downloadQueue chan *filePiece, results chan *pieceResult) {
+
+	//1、新建client，进行handshake
 	c, err := client.New(peer, torr.PeerID, torr.InfoHash)
 	if err != nil {
 		log.Printf("Connecting with %s .... HandShake Fail\n", peer.IP)
@@ -133,26 +139,29 @@ func (torr *Torrent) startDownloadWorker(peer peers.Peer, workQueue chan *pieceW
 	defer c.Conn.Close()
 	log.Printf("Connecting with %s .... HandShake OK\n", peer.IP)
 
+	//发送相关信息
 	c.SendUnchoke()
 	c.SendInterested()
 
-	for pw := range workQueue {
+
+	//开启下载队列
+	for pw := range downloadQueue {
 		if !c.Bitfield.HasPiece(pw.index) {
-			workQueue <- pw 
+			downloadQueue <- pw
 			continue
 		}
 
 		buf, err := attemptDownloadPiece(c, pw)
 		if err != nil {
 			log.Println("Bye", err)
-			workQueue <- pw 
+			downloadQueue <- pw
 			return
 		}
 
 		err = checkIntegrity(pw, buf)
 		if err != nil {
 			log.Printf("Piece #%d not right, Check please\n", pw.index)
-			workQueue <- pw 
+			downloadQueue <- pw
 			continue
 		}
 
@@ -161,6 +170,7 @@ func (torr *Torrent) startDownloadWorker(peer peers.Peer, workQueue chan *pieceW
 	}
 }
 
+//计算边界，用于处理完整性的
 func (torr *Torrent) calculateBoundsForPiece(index int) (begin int, end int) {
 	begin = index * torr.PieceLength
 	end = begin + torr.PieceLength
@@ -175,21 +185,27 @@ func (torr *Torrent) calculatePieceSize(index int) int {
 	return end - begin
 }
 
+//下载pieces
 func (torr *Torrent) Download() ([]byte, error) {
 	log.Println("Now, We are downloading file : ", torr.Name)
-	workQueue := make(chan *pieceWork, len(torr.PieceHashes))
+
+	//生成队列
+	downloadQueue := make(chan *filePiece, len(torr.PieceHashes))
 	results := make(chan *pieceResult)
 	for index, hash := range torr.PieceHashes {
 		length := torr.calculatePieceSize(index)
-		workQueue <- &pieceWork{index, hash, length}
+		downloadQueue <- &filePiece{index, hash, length}
 	}
 
+	//生成peers对象,并下载
 	for _, peer := range torr.Peers {
-		go torr.startDownloadWorker(peer, workQueue, results)
+		go torr.startDownloadWorker(peer, downloadQueue, results)
 	}
 
 	buf := make([]byte, torr.Length)
 	donePieces := 0
+
+	//对于每个piece
 	for donePieces < len(torr.PieceHashes) {
 		res := <-results
 		begin, end := torr.calculateBoundsForPiece(res.index)
@@ -197,10 +213,10 @@ func (torr *Torrent) Download() ([]byte, error) {
 		donePieces++
 
 		percent := float64(donePieces) / float64(len(torr.PieceHashes)) * 100
-		numWorkers := runtime.NumGoroutine() - 1 
-		log.Printf("(We have gone through (%0.2f%%)), #%d --(piece)--> #%d",percent,numWorkers,res.index)
+		numWorkers := runtime.NumGoroutine() - 1
+		log.Printf("(We have gone through (%0.2f%%)), #%d --(piece)--> #%d", percent, numWorkers, res.index)
 	}
-	close(workQueue)
+	close(downloadQueue)
 
 	return buf, nil
 }

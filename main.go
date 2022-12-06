@@ -8,6 +8,7 @@ import (
 
 func main() {
 
+	//这部分是处理了空值的情况，防止出现用户不提供完整值的情况
 	inTorrentPath := ""
 	outFilePath := ""
 
@@ -31,7 +32,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//下载对应的pieces
+	//下载对应的pieces并完成拼接
 	err = tf.DownloadToFile(outFilePath)
 	if err != nil {
 		log.Fatal(err)

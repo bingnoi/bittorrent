@@ -8,6 +8,8 @@ import (
 
 type messageID uint8
 
+
+//宏定义
 const (
 	MsgChoke messageID = 0
 	MsgUnchoke messageID = 1
